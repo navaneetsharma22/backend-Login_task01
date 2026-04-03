@@ -7,55 +7,103 @@ const generateOtp = require("../utils/generateOtp");
 const sendEmail = require("../utils/sendEmail");
 const sendSms = require("../utils/sendSms");
 
-// 🔑 Generate JWT
+const normalizeValue = (value) => {
+  if (typeof value !== "string") return undefined;
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+};
+
+const buildContactFilters = ({ email, phone }) => {
+  const filters = [];
+
+  if (email) filters.push({ email });
+  if (phone) filters.push({ phone });
+
+  return filters;
+};
+
+const sendOtpThroughAvailableChannels = async ({ email, phone, otp, subject }) => {
+  const deliveryErrors = [];
+  let delivered = false;
+
+  if (email) {
+    try {
+      await sendEmail(email, subject, `Your OTP is: ${otp}`);
+      delivered = true;
+    } catch (error) {
+      deliveryErrors.push(`email: ${error.message}`);
+    }
+  }
+
+  if (phone) {
+    try {
+      await sendSms(phone, otp);
+      delivered = true;
+    } catch (error) {
+      deliveryErrors.push(`phone: ${error.message}`);
+    }
+  }
+
+  return { delivered, deliveryErrors };
+};
+
 const generateToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, {
     expiresIn: "7d",
   });
 };
 
-///////////////////////////////////////////////////////////
-// 1. REGISTER (Send OTP)
-///////////////////////////////////////////////////////////
 exports.register = async (req, res) => {
   try {
-    const { name, email, phone } = req.body;
+    const name = normalizeValue(req.body.name);
+    const email = normalizeValue(req.body.email);
+    const phone = normalizeValue(req.body.phone);
+    const contactFilters = buildContactFilters({ email, phone });
 
-    // check existing user
-    let user = await User.findOne({
-      $or: [{ email }, { phone }],
-    });
+    if (!name) {
+      return res.status(400).json({ message: "Name is required" });
+    }
 
-    // ❌ If already verified → block
+    if (contactFilters.length === 0) {
+      return res.status(400).json({ message: "Email or phone is required" });
+    }
+
+    let user = await User.findOne({ $or: contactFilters });
+
     if (user && user.isVerified) {
       return res.status(400).json({ message: "User already exists" });
     }
 
-    // 🔥 delete old OTPs (prevent spam)
-    await Otp.deleteMany({
-      $or: [{ email }, { phone }],
-    });
+    await Otp.deleteMany({ $or: contactFilters });
 
-    // generate OTP
     const otp = generateOtp();
 
-    // save OTP
     await Otp.create({
       email,
       phone,
       otp,
-      expiresAt: new Date(Date.now() + 5 * 60 * 1000), // 5 min
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000),
     });
 
-    // 🔥 send OTP FIRST
-    try {
-      if (email) await sendEmail(email, "Your OTP Code", `Your OTP is: ${otp}`);
-      if (phone) await sendSms(phone, otp);
-    } catch (err) {
-      return res.status(500).json({ message: "Failed to send OTP" });
+    const { delivered, deliveryErrors } = await sendOtpThroughAvailableChannels({
+      email,
+      phone,
+      otp,
+      subject: "Your OTP Code",
+    });
+
+    if (!delivered) {
+      await Otp.deleteMany({ $or: contactFilters });
+
+      return res.status(500).json({
+        message:
+          deliveryErrors.length > 0
+            ? `Failed to send OTP. ${deliveryErrors.join(" | ")}`
+            : "Failed to send OTP",
+      });
     }
 
-    // 🔥 create user only if not exists
     if (!user) {
       user = await User.create({
         name,
@@ -66,21 +114,24 @@ exports.register = async (req, res) => {
     }
 
     res.json({ message: "OTP sent successfully" });
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-///////////////////////////////////////////////////////////
-// 2. VERIFY OTP (Registration)
-///////////////////////////////////////////////////////////
 exports.verifyOtp = async (req, res) => {
   try {
-    const { email, phone, otp } = req.body;
+    const email = normalizeValue(req.body.email);
+    const phone = normalizeValue(req.body.phone);
+    const otp = normalizeValue(req.body.otp);
+    const contactFilters = buildContactFilters({ email, phone });
+
+    if (contactFilters.length === 0 || !otp) {
+      return res.status(400).json({ message: "Email or phone and OTP are required" });
+    }
 
     const otpRecord = await Otp.findOne({
-      $or: [{ email }, { phone }],
+      $or: contactFilters,
       otp,
     });
 
@@ -92,9 +143,7 @@ exports.verifyOtp = async (req, res) => {
       return res.status(400).json({ message: "OTP expired" });
     }
 
-    const user = await User.findOne({
-      $or: [{ email }, { phone }],
-    });
+    const user = await User.findOne({ $or: contactFilters });
 
     if (!user) {
       return res.status(400).json({ message: "User not found" });
@@ -106,18 +155,19 @@ exports.verifyOtp = async (req, res) => {
     await Otp.deleteOne({ _id: otpRecord._id });
 
     res.json({ message: "OTP verified successfully" });
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-///////////////////////////////////////////////////////////
-// 3. SET PASSWORD
-///////////////////////////////////////////////////////////
 exports.setPassword = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const email = normalizeValue(req.body.email);
+    const password = normalizeValue(req.body.password);
+
+    if (!email || !password) {
+      return res.status(400).json({ message: "Email and password are required" });
+    }
 
     const user = await User.findOne({ email });
 
@@ -131,18 +181,19 @@ exports.setPassword = async (req, res) => {
     await user.save();
 
     res.json({ message: "Password set successfully" });
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-///////////////////////////////////////////////////////////
-// 4. LOGIN (Email + Password)
-///////////////////////////////////////////////////////////
 exports.loginWithPassword = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const email = normalizeValue(req.body.email);
+    const password = normalizeValue(req.body.password);
+
+    if (!email || !password) {
+      return res.status(400).json({ message: "Email and password are required" });
+    }
 
     const user = await User.findOne({ email });
 
@@ -164,30 +215,28 @@ exports.loginWithPassword = async (req, res) => {
       token: generateToken(user._id),
       user,
     });
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-///////////////////////////////////////////////////////////
-// 5. LOGIN OTP (Send OTP)
-///////////////////////////////////////////////////////////
 exports.loginOtp = async (req, res) => {
   try {
-    const { email, phone } = req.body;
+    const email = normalizeValue(req.body.email);
+    const phone = normalizeValue(req.body.phone);
+    const contactFilters = buildContactFilters({ email, phone });
 
-    const user = await User.findOne({
-      $or: [{ email }, { phone }],
-    });
+    if (contactFilters.length === 0) {
+      return res.status(400).json({ message: "Email or phone is required" });
+    }
+
+    const user = await User.findOne({ $or: contactFilters });
 
     if (!user) {
       return res.status(400).json({ message: "User not found" });
     }
 
-    await Otp.deleteMany({
-      $or: [{ email }, { phone }],
-    });
+    await Otp.deleteMany({ $or: contactFilters });
 
     const otp = generateOtp();
 
@@ -198,25 +247,43 @@ exports.loginOtp = async (req, res) => {
       expiresAt: new Date(Date.now() + 5 * 60 * 1000),
     });
 
-    if (email) await sendEmail(email, "Login OTP", `Your OTP is: ${otp}`);
-    if (phone) await sendSms(phone, otp);
+    const { delivered, deliveryErrors } = await sendOtpThroughAvailableChannels({
+      email,
+      phone,
+      otp,
+      subject: "Login OTP",
+    });
+
+    if (!delivered) {
+      await Otp.deleteMany({ $or: contactFilters });
+
+      return res.status(500).json({
+        message:
+          deliveryErrors.length > 0
+            ? `Failed to send OTP. ${deliveryErrors.join(" | ")}`
+            : "Failed to send OTP",
+      });
+    }
 
     res.json({ message: "OTP sent for login" });
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-///////////////////////////////////////////////////////////
-// 6. VERIFY LOGIN OTP
-///////////////////////////////////////////////////////////
 exports.verifyLoginOtp = async (req, res) => {
   try {
-    const { email, phone, otp } = req.body;
+    const email = normalizeValue(req.body.email);
+    const phone = normalizeValue(req.body.phone);
+    const otp = normalizeValue(req.body.otp);
+    const contactFilters = buildContactFilters({ email, phone });
+
+    if (contactFilters.length === 0 || !otp) {
+      return res.status(400).json({ message: "Email or phone and OTP are required" });
+    }
 
     const otpRecord = await Otp.findOne({
-      $or: [{ email }, { phone }],
+      $or: contactFilters,
       otp,
     });
 
@@ -228,9 +295,11 @@ exports.verifyLoginOtp = async (req, res) => {
       return res.status(400).json({ message: "OTP expired" });
     }
 
-    const user = await User.findOne({
-      $or: [{ email }, { phone }],
-    });
+    const user = await User.findOne({ $or: contactFilters });
+
+    if (!user) {
+      return res.status(400).json({ message: "User not found" });
+    }
 
     await Otp.deleteOne({ _id: otpRecord._id });
 
@@ -238,7 +307,6 @@ exports.verifyLoginOtp = async (req, res) => {
       token: generateToken(user._id),
       user,
     });
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
