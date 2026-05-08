@@ -1,26 +1,38 @@
 require("dotenv").config();
 const express = require("express");
-const dotenv = require("dotenv");
 const cors = require("cors");
 const connectDB = require("./config/db");
 
-dotenv.config();
 connectDB();
 
 const app = express();
 
 // Middleware
-const frontendUrl = process.env.FRONTEND_URL;
-if (frontendUrl) {
-  app.use(
-    cors({
-      origin: frontendUrl,
-      credentials: true,
-    })
-  );
-} else {
-  app.use(cors());
-}
+const normalizeOrigin = (url = "") => url.trim().replace(/\/$/, "");
+
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  ...(process.env.FRONTEND_URLS || "").split(",").map((url) => url.trim()),
+  "https://frontend-login-task01.vercel.app",
+]
+  .filter(Boolean)
+  .map(normalizeOrigin);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow non-browser requests (like Postman/cURL) with no Origin header.
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(normalizeOrigin(origin))) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+  })
+);
 
 app.use(express.json());
 
@@ -39,5 +51,3 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
-console.log("ENV CHECK:", process.env.EMAIL_USER);
