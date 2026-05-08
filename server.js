@@ -6,6 +6,7 @@ const connectDB = require("./config/db");
 connectDB();
 
 const app = express();
+app.set("trust proxy", 1);
 
 // Middleware
 const normalizeOrigin = (url = "") => url.trim().replace(/\/$/, "");

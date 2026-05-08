@@ -10,18 +10,23 @@ const {
   verifyLoginOtp,
 } = require("../controllers/authController");
 
-const limiter = require("../middleware/rateLimiter");
+const {
+  registerLimiter,
+  verifyOtpLimiter,
+  loginOtpLimiter,
+  verifyLoginOtpLimiter,
+} = require("../middleware/rateLimiter");
 
 //  Register + OTP
-router.post("/register", limiter, register);
-router.post("/verify-otp", limiter, verifyOtp);
+router.post("/register", registerLimiter, register);
+router.post("/verify-otp", verifyOtpLimiter, verifyOtp);
 router.post("/set-password", setPassword);
 
 //  Login with Password
 router.post("/login-password", loginWithPassword);
 
 //  Login with OTP
-router.post("/login-otp", limiter, loginOtp);
-router.post("/verify-login-otp", limiter, verifyLoginOtp);
+router.post("/login-otp", loginOtpLimiter, loginOtp);
+router.post("/verify-login-otp", verifyLoginOtpLimiter, verifyLoginOtp);
 
 module.exports = router;
