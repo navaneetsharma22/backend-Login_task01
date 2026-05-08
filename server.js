@@ -10,7 +10,18 @@ connectDB();
 const app = express();
 
 // Middleware
-app.use(cors());
+const frontendUrl = process.env.FRONTEND_URL;
+if (frontendUrl) {
+  app.use(
+    cors({
+      origin: frontendUrl,
+      credentials: true,
+    })
+  );
+} else {
+  app.use(cors());
+}
+
 app.use(express.json());
 
 // Routes
