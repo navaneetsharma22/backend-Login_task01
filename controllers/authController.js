@@ -163,13 +163,15 @@ exports.verifyOtp = async (req, res) => {
 exports.setPassword = async (req, res) => {
   try {
     const email = normalizeValue(req.body.email);
+    const phone = normalizeValue(req.body.phone);
     const password = normalizeValue(req.body.password);
+    const contactFilters = buildContactFilters({ email, phone });
 
-    if (!email || !password) {
-      return res.status(400).json({ message: "Email and password are required" });
+    if (contactFilters.length === 0 || !password) {
+      return res.status(400).json({ message: "Email or phone and password are required" });
     }
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ $or: contactFilters });
 
     if (!user || !user.isVerified) {
       return res.status(400).json({ message: "User not verified" });
@@ -186,16 +188,19 @@ exports.setPassword = async (req, res) => {
   }
 };
 
+
 exports.loginWithPassword = async (req, res) => {
   try {
     const email = normalizeValue(req.body.email);
+    const phone = normalizeValue(req.body.phone);
     const password = normalizeValue(req.body.password);
+    const contactFilters = buildContactFilters({ email, phone });
 
-    if (!email || !password) {
-      return res.status(400).json({ message: "Email and password are required" });
+    if (contactFilters.length === 0 || !password) {
+      return res.status(400).json({ message: "Email or phone and password are required" });
     }
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ $or: contactFilters });
 
     if (!user) {
       return res.status(400).json({ message: "User not found" });
@@ -219,6 +224,7 @@ exports.loginWithPassword = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
 
 exports.loginOtp = async (req, res) => {
   try {
