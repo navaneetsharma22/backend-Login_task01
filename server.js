@@ -15,23 +15,29 @@ const allowedOrigins = [
   process.env.FRONTEND_URL,
   ...(process.env.FRONTEND_URLS || "").split(",").map((url) => url.trim()),
   "https://frontend-login-task01.vercel.app",
+
 ]
   .filter(Boolean)
   .map(normalizeOrigin);
 
+
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow non-browser requests (like Postman/cURL) with no Origin header.
+      // DEBUG: See what origin is being sent in your terminal
+      if (origin) console.log("CORS Request from Origin:", origin);
+
       if (!origin) return callback(null, true);
 
       if (allowedOrigins.includes(normalizeOrigin(origin))) {
         return callback(null, true);
       }
 
+      console.error("CORS Blocked for Origin:", origin);
       return callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
+
   })
 );
 
